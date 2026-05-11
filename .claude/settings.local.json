@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:utage-jpg.github.io)",
+      "Bash(curl -s \"https://utage-jpg.github.io/studynote/\")",
+      "Bash(Select-String -Pattern \"\\(firebase|firestore|projectId|notesRef|setSyncWidget\\)\" -Context 2)"
+    ]
+  }
+}
