@@ -12,10 +12,6 @@ html{scroll-behavior:smooth;}
 body{font-family:'Yu Gothic','YuGothic','Meiryo',sans-serif;font-size:14px;line-height:1.75;color:#111;background:#f0f3f8;margin:0;padding-bottom:70px;}
 .save-ind{position:fixed;top:8px;right:10px;z-index:999;background:rgba(30,140,30,.85);color:#fff;padding:3px 10px;border-radius:12px;font-size:11px;opacity:0;transition:opacity .3s;pointer-events:none;}
 .save-ind.show{opacity:1;}
-/* ── Sync widget ── */
-.sync-widget{position:fixed;top:8px;left:10px;z-index:999;font-size:11px;color:#fff;background:rgba(80,80,80,.85);padding:3px 12px;border-radius:12px;pointer-events:none;}
-.sync-widget.ok{background:rgba(20,110,50,.88);}
-.sync-widget.err{background:rgba(160,40,40,.88);}
 /* ── Toolbar ── */
 .toolbar{position:fixed;bottom:0;left:0;right:0;z-index:200;background:#222;display:flex;gap:3px;padding:6px 8px;box-shadow:0 -2px 8px rgba(0,0,0,.4);}
 .tb-btn{flex:1;padding:9px 4px;border:none;border-radius:5px;font-size:12px;font-family:inherit;font-weight:bold;cursor:pointer;text-align:center;color:#fff;white-space:nowrap;}
@@ -74,11 +70,15 @@ body{font-family:'Yu Gothic','YuGothic','Meiryo',sans-serif;font-size:14px;line-
 .drag-handle{font-size:20px;color:#bbb;cursor:grab;padding:0 4px;touch-action:none;user-select:none;-webkit-user-select:none;flex-shrink:0;line-height:1;}
 .drag-handle:active{cursor:grabbing;color:#888;}
 .img-thumb{width:56px;height:46px;object-fit:cover;border-radius:3px;border:1px solid #ddd;flex-shrink:0;background:#eee;}
-.img-card-title{flex:1;font-size:12px;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+.img-card-title{flex:1;font-size:12px;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;border:none;background:transparent;font-family:inherit;cursor:pointer;padding:1px 2px;border-radius:3px;}
+.img-card-title:focus{outline:1.5px solid #1a3c6e;background:#fffde8;cursor:text;white-space:normal;}
 .img-del{background:none;border:none;color:#cc4444;font-size:18px;cursor:pointer;padding:4px;flex-shrink:0;line-height:1;}
 .img-del:hover{color:#ff2222;}
 .img-empty-hint{color:#ccc;font-style:italic;font-size:12px;padding:6px 0;}
 .img-uploading{color:#1a3c6e;font-size:12px;padding:6px 0;font-style:italic;}
+/* ── ドロップゾーン ── */
+.img-drop-zone{border:2px dashed #c8d4e8;border-radius:6px;padding:14px;text-align:center;color:#bbb;font-size:12px;margin-top:6px;transition:border-color .15s,background .15s;cursor:default;user-select:none;}
+.img-drop-zone.drag-over{border-color:#1a3c6e;background:#eef3ff;color:#1a3c6e;}
 /* ── Image view ── */
 .mblk{margin-bottom:18px;}
 .mtitle{font-size:12px;font-weight:bold;background:#fffbe8;padding:4px 10px;border-left:3px solid #d4a000;margin-bottom:6px;}
@@ -115,11 +115,10 @@ body.view-mode .note-block--empty{display:none!important;}
 }
 </style>
 </head>
-<body class="edit-mode">
+<body class="view-mode">
 <div class="save-ind" id="saveInd">保存済み ✓</div>
-<div class="sync-widget" id="syncWidget">☁ 接続中...</div>
 <div class="toolbar">
-  <button class="tb-btn btn-mode" id="modeBtn" onclick="toggleMode()">👁 表示</button>
+  <button class="tb-btn btn-mode" id="modeBtn" onclick="toggleMode()">✏️ 入力</button>
   <button class="tb-btn btn-print" onclick="window.print()">🖨 印刷</button>
 </div>
 <nav class="sticky-nav">
@@ -156,12 +155,7 @@ function imgDocRef(id) {
   return fbDb.collection('ikkyu2026').doc('notes').collection('imgs').doc(id);
 }
 
-function setSyncWidget(text, cls) {
-  const el = document.getElementById('syncWidget');
-  if (!el) return;
-  el.textContent = '☁ ' + text;
-  el.className = 'sync-widget ' + (cls || '');
-}
+function setSyncWidget() {}
 
 // ── Firestore テキスト同期 ─────────────────────────────
 async function syncToFirestore() {
@@ -369,8 +363,9 @@ function buildImgTabHTML() {
     <div class="edit-only">
       <div class="img-add-row">
         <button class="img-add-btn" onclick="triggerAdd('${s}')">＋ 画像を追加</button>
-        <input type="file" accept="image/*" id="img-input-${sid}" style="display:none" onchange="onImgAdd(this,'${s}')">
+        <input type="file" accept="image/*" multiple id="img-input-${sid}" style="display:none" onchange="onImgAdd(this,'${s}')">
       </div>
+      <div class="img-drop-zone" id="img-drop-${sid}" data-subj="${s}">ここに画像をドロップして追加</div>
       <div class="img-list" id="img-list-${sid}" data-subj="${s}"></div>
     </div>
     <div class="view-only" id="img-view-${sid}"></div>
@@ -467,12 +462,10 @@ function triggerAdd(subj) {
   document.getElementById(`img-input-${SUBJ_IDS[subj]}`).click();
 }
 
-async function onImgAdd(input, subj) {
-  const file = input.files[0];
-  if (!file) return;
+async function processImgFile(file, subj) {
   const rawTitle = file.name.replace(/\.[^.]+$/, '');
   const title = prompt('画像のタイトルを入力してください', rawTitle);
-  if (title === null) { input.value = ''; return; }
+  if (title === null) return;
 
   const sid = SUBJ_IDS[subj];
   const list = document.getElementById(`img-list-${sid}`);
@@ -482,10 +475,8 @@ async function onImgAdd(input, subj) {
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
   await uploadImgToFirestore(id, dataUrl);
-
   data.imgMeta[subj].push({id, title: title.trim() || rawTitle});
   await syncToFirestore();
-
   await renderImgCards(subj);
   await renderImgView(subj);
 
@@ -497,6 +488,12 @@ async function onImgAdd(input, subj) {
       const ti = body.previousElementSibling.querySelector('.ti');
       if (ti) ti.textContent = '▲';
     }
+  }
+}
+
+async function onImgAdd(input, subj) {
+  for (const file of input.files) {
+    await processImgFile(file, subj);
   }
   input.value = '';
 }
@@ -521,6 +518,19 @@ async function resizeImg(file) {
     };
     reader.readAsDataURL(file);
   });
+}
+
+async function onImgTitleBlur(el) {
+  const id = el.dataset.imgid, subj = el.dataset.subj;
+  const newTitle = el.value.trim();
+  const meta = (data.imgMeta[subj] || []).find(m => m.id === id);
+  if (!meta) return;
+  if (!newTitle) { el.value = meta.title; return; }
+  if (meta.title !== newTitle) {
+    meta.title = newTitle;
+    await syncToFirestore();
+    await renderImgView(subj);
+  }
 }
 
 async function delImg(subj, id) {
@@ -549,7 +559,10 @@ async function renderImgCards(subj) {
     card.innerHTML = `
       <div class="drag-handle">⠿</div>
       <img class="img-thumb" src="" alt="" data-imgid="${esc(m.id)}">
-      <div class="img-card-title">${esc(m.title)}</div>
+      <input class="img-card-title" type="text" value="${esc(m.title)}"
+        data-imgid="${esc(m.id)}" data-subj="${esc(subj)}"
+        onblur="onImgTitleBlur(this)"
+        onkeydown="if(event.key==='Enter')this.blur()">
       <button class="img-del" onclick="delImg('${subj}','${m.id}')">✕</button>`;
     list.appendChild(card);
     // 非同期で画像を読み込む
@@ -579,7 +592,34 @@ async function renderImgView(subj) {
   }
 }
 
-// ── ドラッグ＆ドロップ ────────────────────────────────
+// ── 画像ドロップゾーン ────────────────────────────────
+function initImgDropZones() {
+  document.querySelectorAll('.img-drop-zone').forEach(zone => {
+    const subj = zone.dataset.subj;
+
+    zone.addEventListener('dragenter', e => {
+      e.preventDefault();
+      zone.classList.add('drag-over');
+    });
+    zone.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    });
+    zone.addEventListener('dragleave', e => {
+      if (!zone.contains(e.relatedTarget)) zone.classList.remove('drag-over');
+    });
+    zone.addEventListener('drop', async e => {
+      e.preventDefault();
+      zone.classList.remove('drag-over');
+      const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
+      for (const file of files) {
+        await processImgFile(file, subj);
+      }
+    });
+  });
+}
+
+// ── 並び替えドラッグ＆ドロップ ────────────────────────
 let _drag = null, _dragMoved = false, _dragY0 = 0, _dragList = null, _dragCtx = null;
 
 function initDragDrop() {
@@ -663,7 +703,7 @@ function toggleBlk(hdr) {
   hdr.querySelector('.ti').textContent = col ? '▼' : '▲';
 }
 
-let isEdit = true;
+let isEdit = false;
 function toggleMode() {
   isEdit = !isEdit;
   document.body.className = isEdit ? 'edit-mode' : 'view-mode';
@@ -688,6 +728,7 @@ async function populateUI() {
 document.addEventListener('DOMContentLoaded', async () => {
   loadData();
   buildUI();
+  initImgDropZones();
   initDragDrop();
   await IDB.get('__init__');
   await populateUI();
