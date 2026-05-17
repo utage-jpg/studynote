@@ -57,6 +57,8 @@ body{font-family:'Yu Gothic','YuGothic','Meiryo',sans-serif;font-size:14px;line-
 .item-add-btn{background:#1a3c6e;color:#fff;border:none;padding:7px 16px;border-radius:5px;font-size:13px;font-family:inherit;cursor:pointer;flex-shrink:0;font-weight:bold;}
 .item-add-btn:hover{background:#22508a;}
 .item-empty-hint{color:#ccc;font-style:italic;font-size:12px;padding:4px 0;}
+.theme-txt{width:100%;padding:8px 10px;border:1.5px solid #c8d4e8;border-radius:5px;font-family:inherit;font-size:13px;line-height:1.75;resize:vertical;background:#f8faff;color:#111;min-height:120px;}
+.theme-txt:focus{outline:2px solid #1a3c6e;background:#fff;}
 /* ── Rendered text ── */
 .rendered .l0{margin:2px 0;padding:2px 0;border-bottom:1px solid #f0f0f0;}
 .rendered .empty{color:#ccc;font-style:italic;font-size:12px;padding:8px 0;}
@@ -86,7 +88,6 @@ body{font-family:'Yu Gothic','YuGothic','Meiryo',sans-serif;font-size:14px;line-
 /* ── Mode control ── */
 body.edit-mode .view-only{display:none!important;}
 body.view-mode .edit-only{display:none!important;}
-body.view-mode .blk-body.col{display:block!important;}
 body.view-mode .note-block--empty{display:none!important;}
 /* ── Mobile ── */
 @media(max-width:600px){.subject-section{padding:10px 8px;}.nav-btn{padding:6px 3px;font-size:11px;min-width:40px;}}
@@ -119,7 +120,6 @@ body.view-mode .note-block--empty{display:none!important;}
 <div class="save-ind" id="saveInd">保存済み ✓</div>
 <div class="toolbar">
   <button class="tb-btn btn-mode" id="modeBtn" onclick="toggleMode()">✏️ 入力</button>
-  <button class="tb-btn btn-print" onclick="window.print()">🖨 印刷</button>
 </div>
 <nav class="sticky-nav">
   <button class="nav-btn" data-id="kankaku" onclick="showSubj('kankaku',this)">計画</button>
@@ -239,7 +239,7 @@ const SKEY = 'ikkyu2026';
 const SECTIONS = [
   {id:'key',    icon:'📌', label:'キーポイント'},
   {id:'mis',    icon:'❌', label:'間違いノート'},
-  {id:'themes', icon:'📖', label:'テーマメモ'},
+  {id:'themes', icon:'📖', label:'テーマメモ', textarea: true},
   {id:'mock',   icon:'📝', label:'模擬試験見直し'},
 ];
 
@@ -250,7 +250,11 @@ function migrateData() {
     if (!data.subjects[s]) data.subjects[s] = {};
     for (const sec of SECTIONS) {
       const v = data.subjects[s][sec.id];
-      if (!Array.isArray(v)) {
+      if (sec.textarea) {
+        // テキストエリア型：文字列で保存
+        if (Array.isArray(v)) data.subjects[s][sec.id] = v.join('\n');
+        else if (typeof v !== 'string') data.subjects[s][sec.id] = '';
+      } else if (!Array.isArray(v)) {
         data.subjects[s][sec.id] = typeof v === 'string' && v.trim()
           ? v.split('\n').map(l => l.trim()).filter(l => l)
           : [];
@@ -341,17 +345,19 @@ function buildSubjHTML(subj, sid) {
   let h = `<h1 class="subject-title">${label}</h1>`;
   for (const sec of SECTIONS) {
     const eid = `${sid}-${sec.id}`;
-    h += `<div class="note-block">
-  <div class="blk-hdr" onclick="toggleBlk(this)">${sec.icon} ${sec.label} <span class="ti">▼</span></div>
-  <div class="blk-body col">
-    <div class="edit-only">
-      <div class="item-list" id="${eid}-list" data-subj="${subj}" data-field="${sec.id}"></div>
+    const editBody = sec.textarea
+      ? `<textarea class="theme-txt" id="${eid}-ta"
+          oninput="onThemeTxt(this,'${subj}','${sec.id}')"></textarea>`
+      : `<div class="item-list" id="${eid}-list" data-subj="${subj}" data-field="${sec.id}"></div>
       <div class="item-add-row">
         <input class="item-input" id="${eid}-input" type="text" placeholder=""
           onkeydown="if(event.key==='Enter'){event.preventDefault();addItemFromInput('${subj}','${sec.id}',this);}">
         <button class="item-add-btn" onclick="addItemFromInput('${subj}','${sec.id}',document.getElementById('${eid}-input'))">追加</button>
-      </div>
-    </div>
+      </div>`;
+    h += `<div class="note-block">
+  <div class="blk-hdr" onclick="toggleBlk(this)">${sec.icon} ${sec.label} <span class="ti">▼</span></div>
+  <div class="blk-body col">
+    <div class="edit-only">${editBody}</div>
     <div class="view-only rendered" id="${eid}-v"></div>
   </div></div>`;
   }
@@ -412,6 +418,20 @@ function renderItemList(subj, field) {
 
 function syncViewMode(subj, field) {
   const sid = SUBJ_IDS[subj];
+  const sec = SECTIONS.find(s => s.id === field);
+  if (sec && sec.textarea) {
+    const text = data.subjects[subj][field] || '';
+    const html = text.trim()
+      ? text.split('\n').map(l => l ? `<div class="l0">${esc(l)}</div>` : '<div class="l0-sp"></div>').join('')
+      : '<div class="empty">（まだ入力がありません）</div>';
+    setEl(`${sid}-${field}-v`, html);
+    const ta = document.getElementById(`${sid}-${field}-ta`);
+    if (ta) {
+      const block = ta.closest('.note-block');
+      if (block) block.classList.toggle('note-block--empty', !text.trim());
+    }
+    return;
+  }
   const items = data.subjects[subj][field] || [];
   const html = items.length
     ? items.map(t => `<div class="l0">${esc(t)}</div>`).join('')
@@ -422,6 +442,12 @@ function syncViewMode(subj, field) {
     const block = listEl.closest('.note-block');
     if (block) block.classList.toggle('note-block--empty', items.length === 0);
   }
+}
+
+function onThemeTxt(el, subj, field) {
+  data.subjects[subj][field] = el.value;
+  syncViewMode(subj, field);
+  schedSave();
 }
 
 function addItemFromInput(subj, field, inputEl) {
@@ -713,13 +739,27 @@ function toggleMode() {
   isEdit = !isEdit;
   document.body.className = isEdit ? 'edit-mode' : 'view-mode';
   document.getElementById('modeBtn').textContent = isEdit ? '👁 表示' : '✏️ 入力';
+  if (!isEdit) {
+    // 表示モードに切り替えた時、全セクションを開く
+    document.querySelectorAll('.blk-body.col').forEach(body => {
+      body.classList.remove('col');
+      const ti = body.previousElementSibling?.querySelector('.ti');
+      if (ti) ti.textContent = '▲';
+    });
+  }
 }
 
 // ── データ投入 ────────────────────────────────────────
 async function populateUI() {
   for (const s of SUBJECTS) {
+    const sid = SUBJ_IDS[s];
     for (const sec of SECTIONS) {
-      renderItemList(s, sec.id);
+      if (sec.textarea) {
+        const ta = document.getElementById(`${sid}-${sec.id}-ta`);
+        if (ta) ta.value = data.subjects[s][sec.id] || '';
+      } else {
+        renderItemList(s, sec.id);
+      }
       syncViewMode(s, sec.id);
     }
   }
