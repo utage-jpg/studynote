@@ -254,6 +254,11 @@ function migrateData() {
         data.subjects[s][sec.id] = typeof v === 'string' && v.trim()
           ? v.split('\n').map(l => l.trim()).filter(l => l)
           : [];
+      } else {
+        // {t, h} オブジェクト形式が混入していた場合、文字列に戻す
+        data.subjects[s][sec.id] = v.map(item =>
+          typeof item === 'object' && item !== null ? (item.t || '') : String(item)
+        ).filter(s => s.length > 0);
       }
     }
     if (!data.imgMeta[s]) data.imgMeta[s] = [];
