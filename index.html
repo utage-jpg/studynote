@@ -240,10 +240,15 @@ function migrateData() {
           data.subjects[s][sec.id] = [];
         } else {
           data.subjects[s][sec.id] = v.map(item => {
-            if (typeof item === 'object' && item !== null && ('body' in item || 'title' in item))
-              return {title: item.title || '', body: item.body || ''};
-            return {title: '', body: typeof item === 'string' ? item : String(item)};
-          });
+            if (typeof item === 'string') return {title: '', body: item};
+            if (typeof item !== 'object' || item === null) return null;
+            // {title, body} 正規形式
+            if ('title' in item || 'body' in item)
+              return {title: typeof item.title === 'string' ? item.title : '', body: typeof item.body === 'string' ? item.body : ''};
+            // {t, h} 旧マーカー形式
+            if ('t' in item) return {title: '', body: typeof item.t === 'string' ? item.t : ''};
+            return null;
+          }).filter(Boolean);
         }
       } else if (!Array.isArray(v)) {
         data.subjects[s][sec.id] = typeof v === 'string' && v.trim()
@@ -383,10 +388,12 @@ function syncViewMode(subj, field) {
     const themes = data.subjects[subj]['themes'] || [];
     const html = themes.length
       ? themes.map(t => {
-          const bodyHtml = (t.body || '').split('\n')
+          const title = typeof t.title === 'string' ? t.title : '';
+          const body  = typeof t.body  === 'string' ? t.body  : '';
+          const bodyHtml = body.split('\n')
             .map(l => `<div class="theme-body-line">${l ? esc(l) : '&nbsp;'}</div>`).join('');
           return `<div class="theme-view-item">
-            ${t.title && t.title.trim() ? `<div class="theme-view-title">${esc(t.title)}</div>` : ''}
+            ${title.trim() ? `<div class="theme-view-title">${esc(title)}</div>` : ''}
             <div>${bodyHtml}</div>
           </div>`;
         }).join('')
@@ -440,19 +447,21 @@ function renderThemeList(subj) {
   const themes = data.subjects[subj]['themes'] || [];
   tlist.innerHTML = '';
   themes.forEach((theme, i) => {
+    const safeTitle = typeof theme.title === 'string' ? theme.title : '';
+    const safeBody  = typeof theme.body  === 'string' ? theme.body  : '';
     const card = document.createElement('div');
     card.className = 'theme-card'; card.dataset.idx = i;
     card.innerHTML = `
       <div class="theme-card-hdr">
         <div class="drag-handle">⠿</div>
-        <input class="theme-card-title" type="text" value="${esc(theme.title)}" placeholder="タイトル（任意）"
+        <input class="theme-card-title" type="text" value="${esc(safeTitle)}" placeholder="タイトル（任意）"
           data-subj="${esc(subj)}" data-idx="${i}"
           onblur="onThemeTitleBlur(this)" onkeydown="if(event.key==='Enter')event.preventDefault()">
         <button class="theme-card-del" onclick="delTheme('${esc(subj)}',${i})">✕</button>
       </div>
       <textarea class="theme-card-body" data-subj="${esc(subj)}" data-idx="${i}"
         oninput="onThemeBodyInput(this)"></textarea>`;
-    card.querySelector('.theme-card-body').value = theme.body || '';
+    card.querySelector('.theme-card-body').value = safeBody;
     tlist.appendChild(card);
   });
 }
