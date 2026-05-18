@@ -692,8 +692,9 @@ async function exportData() {
   for (const s of SUBJECTS) {
     imgData[s] = [];
     for (const m of (data.imgMeta[s] || [])) {
-      const d = await IDB.get(m.id);
-      imgData[s].push({...m, data: d});
+      // IDBキャッシュになければFirestoreからも取得
+      const d = await fetchImgData(m.id);
+      imgData[s].push({...m, data: d || null});
     }
   }
   const out = {v: 4, subjects: data.subjects, imgMeta: data.imgMeta, imgData, ts: Date.now()};
@@ -715,7 +716,8 @@ async function importData(ev) {
     if (imp.imgData) {
       for (const s of SUBJECTS)
         for (const m of (imp.imgData[s] || []))
-          if (m.id && m.data) await IDB.put(m.id, m.data);
+          // IDBキャッシュ＋Firestoreサブコレクション両方に保存
+          if (m.id && m.data) await uploadImgToFirestore(m.id, m.data);
     }
     data._updatedAt = Date.now();
     localStorage.setItem(SKEY, JSON.stringify(data));
