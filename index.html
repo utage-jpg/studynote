@@ -15,7 +15,7 @@ body{font-family:'Yu Gothic','YuGothic','Meiryo',sans-serif;font-size:14px;line-
 /* ── Toolbar ── */
 .toolbar{position:fixed;bottom:0;left:0;right:0;z-index:200;background:#222;display:flex;gap:3px;padding:6px 8px;box-shadow:0 -2px 8px rgba(0,0,0,.4);}
 .tb-btn{flex:1;padding:9px 4px;border:none;border-radius:5px;font-size:12px;font-family:inherit;font-weight:bold;cursor:pointer;text-align:center;color:#fff;white-space:nowrap;}
-.btn-mode{background:#1a3c6e;}
+.btn-mode{background:#1a3c6e;}.btn-exp{background:#6b3c00;}.btn-imp{background:#555;}
 /* ── Nav ── */
 .sticky-nav{position:sticky;top:0;z-index:100;background:#1a3c6e;display:flex;gap:2px;padding:5px 6px;overflow-x:auto;box-shadow:0 2px 6px rgba(0,0,0,.3);}
 .nav-btn{flex:1;min-width:48px;padding:7px 6px;background:rgba(255,255,255,.18);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12.5px;font-family:inherit;font-weight:bold;white-space:nowrap;}
@@ -139,6 +139,8 @@ body.view-mode .note-block--empty{display:none!important;}
 <div class="save-ind" id="saveInd">保存済み ✓</div>
 <div class="toolbar">
   <button class="tb-btn btn-mode" id="modeBtn" onclick="toggleMode()">✏️ 入力</button>
+  <button class="tb-btn btn-exp" onclick="exportData()">↓ バックアップ</button>
+  <label class="tb-lbl btn-imp" style="flex:1;padding:9px 4px;border:none;border-radius:5px;font-size:12px;font-family:inherit;font-weight:bold;cursor:pointer;text-align:center;color:#fff;white-space:nowrap;background:#555;">↑ 復元<input type="file" accept=".json" onchange="importData(event)" style="display:none"></label>
 </div>
 <nav class="sticky-nav">
   <button class="nav-btn" data-id="kankaku" onclick="showSubj('kankaku',this)">計画</button>
@@ -170,6 +172,8 @@ function setSyncWidget() {}
 
 async function syncToFirestore() {
   if (_syncBusy) return;
+  // 安全チェック：Firestoreからロードされる前（_updatedAt未設定）は書き込み禁止
+  if (!data._updatedAt) return;
   _syncBusy = true;
   try {
     data._updatedAt = Date.now();
@@ -207,9 +211,12 @@ function startSync() {
       data.subjects = remote.subjects || {};
       data.imgMeta  = remote.imgMeta  || {};
       data._updatedAt = remoteTs;
+      _needsCleanup = false;
       migrateData();
       localStorage.setItem(SKEY, JSON.stringify(data));
       await populateUI();
+      // 汚染データをFirestoreから受け取った場合はクリーン版を書き戻す
+      if (_needsCleanup) syncToFirestore();
     }
   }, err => console.error('onSnapshot:', err));
 }
@@ -226,6 +233,14 @@ const SECTIONS = [
 ];
 
 let data = {subjects:{}, imgMeta:{}};
+let _needsCleanup = false; // 汚染データを検出した場合に即時Firestore保存
+
+function _safeStr(v) {
+  // 文字列以外 or "[object...]" のような誤変換は空文字に
+  if (typeof v !== 'string') return '';
+  if (/^\[object /.test(v)) { _needsCleanup = true; return ''; }
+  return v;
+}
 
 function migrateData() {
   for (const s of SUBJECTS) {
@@ -240,13 +255,13 @@ function migrateData() {
           data.subjects[s][sec.id] = [];
         } else {
           data.subjects[s][sec.id] = v.map(item => {
-            if (typeof item === 'string') return {title: '', body: item};
+            if (typeof item === 'string') return {title: '', body: _safeStr(item)};
             if (typeof item !== 'object' || item === null) return null;
             // {title, body} 正規形式
             if ('title' in item || 'body' in item)
-              return {title: typeof item.title === 'string' ? item.title : '', body: typeof item.body === 'string' ? item.body : ''};
+              return {title: _safeStr(item.title), body: _safeStr(item.body)};
             // {t, h} 旧マーカー形式
-            if ('t' in item) return {title: '', body: typeof item.t === 'string' ? item.t : ''};
+            if ('t' in item) return {title: '', body: _safeStr(item.t)};
             return null;
           }).filter(Boolean);
         }
@@ -669,6 +684,46 @@ async function populateUI() {
     }
   }
   for(const s of SUBJECTS){ await renderImgCards(s); await renderImgView(s); }
+}
+
+// ── バックアップ / 復元 ───────────────────────────────
+async function exportData() {
+  const imgData = {};
+  for (const s of SUBJECTS) {
+    imgData[s] = [];
+    for (const m of (data.imgMeta[s] || [])) {
+      const d = await IDB.get(m.id);
+      imgData[s].push({...m, data: d});
+    }
+  }
+  const out = {v: 4, subjects: data.subjects, imgMeta: data.imgMeta, imgData, ts: Date.now()};
+  const blob = new Blob([JSON.stringify(out)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  Object.assign(document.createElement('a'), {
+    href: url, download: `勉強ノート2026_${new Date().toISOString().slice(0,10)}.json`
+  }).click();
+  URL.revokeObjectURL(url);
+}
+
+async function importData(ev) {
+  const file = ev.target.files[0]; if (!file) return;
+  try {
+    const imp = JSON.parse(await file.text());
+    data.subjects = imp.subjects || {};
+    data.imgMeta  = imp.imgMeta  || {};
+    migrateData();
+    if (imp.imgData) {
+      for (const s of SUBJECTS)
+        for (const m of (imp.imgData[s] || []))
+          if (m.id && m.data) await IDB.put(m.id, m.data);
+    }
+    data._updatedAt = Date.now();
+    localStorage.setItem(SKEY, JSON.stringify(data));
+    await syncToFirestore();
+    await populateUI();
+    alert('復元しました ✓');
+  } catch (err) { alert('読み込みに失敗しました: ' + err.message); }
+  ev.target.value = '';
 }
 
 // ── 起動 ─────────────────────────────────────────────
