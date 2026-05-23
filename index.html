@@ -208,14 +208,25 @@ function startSync() {
     const remote = snap.data();
     const remoteTs = remote._updatedAt || 0, localTs = data._updatedAt || 0;
     if (remoteTs > localTs) {
-      data.subjects = remote.subjects || {};
+      const remoteSubj = remote.subjects || {};
+      // セクション保護：リモートが空でもローカルにデータがあるセクションは保持
+      for (const s of SUBJECTS) {
+        if (!remoteSubj[s]) remoteSubj[s] = {};
+        for (const sec of SECTIONS) {
+          const rv = remoteSubj[s][sec.id];
+          const lv = (data.subjects[s] || {})[sec.id];
+          if ((!Array.isArray(rv) || rv.length === 0) && Array.isArray(lv) && lv.length > 0) {
+            remoteSubj[s][sec.id] = lv;
+          }
+        }
+      }
+      data.subjects = remoteSubj;
       data.imgMeta  = remote.imgMeta  || {};
       data._updatedAt = remoteTs;
       _needsCleanup = false;
       migrateData();
       localStorage.setItem(SKEY, JSON.stringify(data));
       await populateUI();
-      // 汚染データをFirestoreから受け取った場合はクリーン版を書き戻す
       if (_needsCleanup) syncToFirestore();
     }
   }, err => console.error('onSnapshot:', err));
