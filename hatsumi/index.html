@@ -665,12 +665,10 @@ function toggleMode() {
   isEdit=!isEdit;
   document.body.className=isEdit?'edit-mode':'view-mode';
   document.getElementById('modeBtn').textContent=isEdit?'👁 表示':'✏️ 入力';
-  if(!isEdit){
-    document.querySelectorAll('.blk-body.col').forEach(body=>{
-      body.classList.remove('col');
-      const ti=body.previousElementSibling?.querySelector('.ti'); if(ti) ti.textContent='▲';
-    });
-  }
+  document.querySelectorAll('.blk-body.col').forEach(body=>{
+    body.classList.remove('col');
+    const ti=body.previousElementSibling?.querySelector('.ti'); if(ti) ti.textContent='▲';
+  });
 }
 
 // ── データ投入 ────────────────────────────────────────
