@@ -151,6 +151,7 @@ body.view-mode .note-block--empty{display:none!important;}
   <button class="nav-btn img-tab" data-id="images" onclick="showSubj('images',this)">【画像】</button>
 </nav>
 <div id="content"></div>
+<div id="loading" style="position:fixed;inset:0;background:#f0f3f8;z-index:9999;display:flex;align-items:center;justify-content:center;font-size:16px;color:#1a3c6e;">読み込み中...</div>
 <script>
 'use strict';
 
@@ -166,18 +167,15 @@ firebase.initializeApp({
 const fbDb = firebase.firestore();
 let _syncBusy = false;
 
-function notesRef()      { return fbDb.collection('ikkyu2026').doc('notes'); }
-function imgDocRef(id)   { return fbDb.collection('ikkyu2026').doc('notes').collection('imgs').doc(id); }
-function setSyncWidget() {}
+function notesRef()    { return fbDb.collection('ikkyu2026').doc('notes'); }
+function imgDocRef(id) { return fbDb.collection('ikkyu2026').doc('notes').collection('imgs').doc(id); }
+function hideLoading() { const el=document.getElementById('loading'); if(el) el.remove(); }
 
 async function syncToFirestore() {
   if (_syncBusy) return;
-  // 安全チェック：Firestoreからロードされる前（_updatedAt未設定）は書き込み禁止
-  if (!data._updatedAt) return;
   _syncBusy = true;
   try {
-    data._updatedAt = Date.now();
-    await notesRef().set({ subjects: data.subjects, imgMeta: data.imgMeta, _updatedAt: data._updatedAt });
+    await notesRef().set({ subjects: data.subjects, imgMeta: data.imgMeta });
     const el = document.getElementById('saveInd');
     if (el) { el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 1400); }
   } catch (e) { console.error('Firestore write:', e); }
@@ -185,7 +183,7 @@ async function syncToFirestore() {
 }
 
 async function uploadImgToFirestore(id, dataUrl) {
-  await imgDocRef(id).set({ data: dataUrl, _updatedAt: Date.now() });
+  await imgDocRef(id).set({ data: dataUrl });
   await IDB.put(id, dataUrl);
 }
 async function fetchImgData(id) {
@@ -204,32 +202,16 @@ async function deleteImgFromFirestore(id) {
 
 function startSync() {
   notesRef().onSnapshot(async snap => {
-    if (!snap.exists) { await syncToFirestore(); return; }
-    const remote = snap.data();
-    const remoteTs = remote._updatedAt || 0, localTs = data._updatedAt || 0;
-    if (remoteTs > localTs) {
-      const remoteSubj = remote.subjects || {};
-      // セクション保護：リモートが空でもローカルにデータがあるセクションは保持
-      for (const s of SUBJECTS) {
-        if (!remoteSubj[s]) remoteSubj[s] = {};
-        for (const sec of SECTIONS) {
-          const rv = remoteSubj[s][sec.id];
-          const lv = (data.subjects[s] || {})[sec.id];
-          if ((!Array.isArray(rv) || rv.length === 0) && Array.isArray(lv) && lv.length > 0) {
-            remoteSubj[s][sec.id] = lv;
-          }
-        }
-      }
-      data.subjects = remoteSubj;
+    if (snap.metadata.hasPendingWrites) return;
+    if (snap.exists) {
+      const remote = snap.data();
+      data.subjects = remote.subjects || {};
       data.imgMeta  = remote.imgMeta  || {};
-      data._updatedAt = remoteTs;
-      _needsCleanup = false;
-      migrateData();
-      localStorage.setItem(SKEY, JSON.stringify(data));
-      await populateUI();
-      if (_needsCleanup) syncToFirestore();
     }
-  }, err => console.error('onSnapshot:', err));
+    migrateData();
+    await populateUI();
+    hideLoading();
+  }, err => { console.error('onSnapshot:', err); hideLoading(); });
 }
 
 // ── アプリ定数 ────────────────────────────────────────
@@ -244,12 +226,10 @@ const SECTIONS = [
 ];
 
 let data = {subjects:{}, imgMeta:{}};
-let _needsCleanup = false; // 汚染データを検出した場合に即時Firestore保存
 
 function _safeStr(v) {
-  // 文字列以外 or "[object...]" のような誤変換は空文字に
   if (typeof v !== 'string') return '';
-  if (/^\[object /.test(v)) { _needsCleanup = true; return ''; }
+  if (/^\[object /.test(v)) return '';
   return v;
 }
 
@@ -289,15 +269,10 @@ function migrateData() {
   }
 }
 
-function loadData() {
-  try { const s = localStorage.getItem(SKEY); if (s) data = JSON.parse(s); } catch {}
-  migrateData();
-}
-
 let _saveT = null;
 function schedSave() {
   if (_saveT) clearTimeout(_saveT);
-  _saveT = setTimeout(() => { localStorage.setItem(SKEY, JSON.stringify(data)); syncToFirestore(); }, 800);
+  _saveT = setTimeout(syncToFirestore, 800);
 }
 
 // ── IndexedDB ──────────────────────────────────────────
@@ -728,8 +703,6 @@ async function importData(ev) {
           // IDBキャッシュ＋Firestoreサブコレクション両方に保存
           if (m.id && m.data) await uploadImgToFirestore(m.id, m.data);
     }
-    data._updatedAt = Date.now();
-    localStorage.setItem(SKEY, JSON.stringify(data));
     await syncToFirestore();
     await populateUI();
     alert('復元しました ✓');
@@ -739,8 +712,8 @@ async function importData(ev) {
 
 // ── 起動 ─────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-  loadData(); buildUI(); initImgDropZones(); initDragDrop();
-  await IDB.get('__init__'); await populateUI();
+  buildUI(); initImgDropZones(); initDragDrop();
+  await IDB.get('__init__');
   const last=localStorage.getItem('lastTab2026')||'kankaku';
   const btn=document.querySelector(`[data-id="${last}"]`); if(btn) showSubj(last,btn);
   startSync();
