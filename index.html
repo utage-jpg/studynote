@@ -73,8 +73,13 @@ body{font-family:'Yu Gothic','YuGothic','Meiryo',sans-serif;font-size:14px;line-
 .theme-add-btn{width:100%;margin-top:4px;}
 /* ── Rendered text ── */
 .rendered .l0{margin:2px 0;padding:2px 4px;border-bottom:1px solid #f0f0f0;}
+.rendered .l0.l0-hl{background:#fff9c4;border-radius:3px;}
 .rendered .empty{color:#ccc;font-style:italic;font-size:12px;padding:8px 0;}
 .l0-num{font-size:11px;color:#aaa;min-width:22px;display:inline-block;text-align:right;margin-right:6px;}
+/* ── 強調ボタン ── */
+.item-hl-btn{background:none;border:1px solid transparent;color:#ccc;font-size:14px;cursor:pointer;padding:2px 5px;flex-shrink:0;line-height:1;border-radius:3px;}
+.item-hl-btn:hover{color:#f0c040;border-color:#f0c040;}
+.item-hl-btn.active{color:#c07000;background:#fff9c4;border-color:#f0c040;}
 /* ── テーマメモ 表示 ── */
 .theme-view-item{padding-bottom:12px;margin-bottom:12px;border-bottom:1px solid #e0e0e0;}
 .theme-view-item:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0;}
@@ -257,12 +262,15 @@ function migrateData() {
           }).filter(Boolean);
         }
       } else if (!Array.isArray(v)) {
-        data.subjects[s][sec.id] = typeof v === 'string' && v.trim()
+        const strs = typeof v === 'string' && v.trim()
           ? v.split('\n').map(l => l.trim()).filter(l => l) : [];
+        data.subjects[s][sec.id] = strs.map(t => ({t, h: false}));
       } else {
-        data.subjects[s][sec.id] = v.map(item =>
-          typeof item === 'object' && item !== null ? (item.t || '') : String(item)
-        ).filter(s => s.length > 0);
+        data.subjects[s][sec.id] = v.map(item => {
+          if (typeof item === 'object' && item !== null)
+            return {t: _safeStr(item.t), h: !!item.h};
+          return {t: String(item), h: false};
+        }).filter(item => item.t.length > 0);
       }
     }
     if (!data.imgMeta[s]) data.imgMeta[s] = [];
@@ -369,7 +377,9 @@ function renderItemList(subj, field) {
   const items = data.subjects[subj][field] || [];
   list.innerHTML = '';
   if (!items.length) { list.innerHTML = '<div class="item-empty-hint">（まだ項目がありません）</div>'; return; }
-  items.forEach((text, i) => {
+  items.forEach((item, i) => {
+    const text = typeof item === 'object' ? item.t : item;
+    const hl   = typeof item === 'object' ? !!item.h : false;
     const row = document.createElement('div');
     row.className = 'item-row'; row.dataset.idx = i;
     row.innerHTML = `<div class="drag-handle">⠿</div>
@@ -377,6 +387,7 @@ function renderItemList(subj, field) {
       <input class="item-txt-input" type="text" value="${esc(text)}"
         data-subj="${esc(subj)}" data-field="${esc(field)}" data-idx="${i}"
         onblur="onItemBlur(this)" onkeydown="onItemKeydown(event,this)">
+      <button class="item-hl-btn${hl ? ' active' : ''}" title="黄色マーカー" onclick="toggleItemHighlight('${esc(subj)}','${esc(field)}',${i},this)">★</button>
       <button class="item-del-btn" onclick="delItem('${esc(subj)}','${esc(field)}',${i})">✕</button>`;
     list.appendChild(row);
   });
@@ -407,10 +418,14 @@ function syncViewMode(subj, field) {
   // 通常アイテムリスト
   const items = data.subjects[subj][field] || [];
   const html = items.length
-    ? items.map((t, i) => field === 'key'
-        ? `<div class="l0"><span class="l0-num">${i + 1}.</span>${esc(t)}</div>`
-        : `<div class="l0">${esc(t)}</div>`
-      ).join('')
+    ? items.map((item, i) => {
+        const t  = typeof item === 'object' ? item.t : item;
+        const hl = typeof item === 'object' ? !!item.h : false;
+        const cls = 'l0' + (hl ? ' l0-hl' : '');
+        return field === 'key'
+          ? `<div class="${cls}"><span class="l0-num">${i + 1}.</span>${esc(t)}</div>`
+          : `<div class="${cls}">${esc(t)}</div>`;
+      }).join('')
     : '<div class="empty">（まだ入力がありません）</div>';
   setEl(`${sid}-${field}-v`, html);
   const listEl = document.getElementById(`${sid}-${field}-list`);
@@ -420,24 +435,40 @@ function syncViewMode(subj, field) {
 function addItemFromInput(subj, field, inputEl) {
   const text = inputEl.value.trim(); if (!text) return;
   if (!Array.isArray(data.subjects[subj][field])) data.subjects[subj][field] = [];
-  data.subjects[subj][field].push(text);
+  data.subjects[subj][field].push({t: text, h: false});
   inputEl.value = ''; renderItemList(subj, field); syncViewMode(subj, field); schedSave(); inputEl.focus();
 }
 
 function onItemBlur(el) {
   const subj = el.dataset.subj, field = el.dataset.field, idx = parseInt(el.dataset.idx);
   const newText = el.value.trim();
-  if (!newText) { el.value = data.subjects[subj][field][idx] || ''; return; }
-  if (data.subjects[subj][field][idx] !== newText) { data.subjects[subj][field][idx] = newText; syncViewMode(subj, field); schedSave(); }
+  const cur = data.subjects[subj][field][idx];
+  const curText = typeof cur === 'object' ? cur.t : (cur || '');
+  if (!newText) { el.value = curText; return; }
+  if (curText !== newText) {
+    if (typeof cur === 'object') cur.t = newText;
+    else data.subjects[subj][field][idx] = {t: newText, h: false};
+    syncViewMode(subj, field); schedSave();
+  }
 }
 
 function onItemKeydown(e, el) {
   if (e.key === 'Enter')  { e.preventDefault(); el.blur(); }
-  if (e.key === 'Escape') { el.value = data.subjects[el.dataset.subj][el.dataset.field][parseInt(el.dataset.idx)] || ''; el.blur(); }
+  if (e.key === 'Escape') {
+    const cur = data.subjects[el.dataset.subj][el.dataset.field][parseInt(el.dataset.idx)];
+    el.value = (typeof cur === 'object' ? cur.t : cur) || '';
+    el.blur();
+  }
 }
 
 function delItem(subj, field, idx) {
   data.subjects[subj][field].splice(idx, 1); renderItemList(subj, field); syncViewMode(subj, field); schedSave();
+}
+
+function toggleItemHighlight(subj, field, idx, btn) {
+  const item = data.subjects[subj][field][idx];
+  if (typeof item === 'object') { item.h = !item.h; btn.classList.toggle('active', item.h); }
+  syncViewMode(subj, field); schedSave();
 }
 
 // ── テーマメモ ────────────────────────────────────────
