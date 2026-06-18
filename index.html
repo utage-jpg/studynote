@@ -606,7 +606,16 @@ function initImgDropZones() {
 }
 
 // ── 並び替えドラッグ＆ドロップ ────────────────────────
-let _drag=null,_dragMoved=false,_dragY0=0,_dragList=null,_dragCtx=null;
+let _drag=null,_dragMoved=false,_dragY0=0,_dragList=null,_dragSrcList=null,_dragCtx=null,_dragSrcCtx=null,_dragItemData=null;
+let _scrollRAF=null,_scrollPointerY=0;
+
+function _autoScrollStep() {
+  if (!_drag) { _scrollRAF=null; return; }
+  const zone=80, speed=10, y=_scrollPointerY, wh=window.innerHeight;
+  if (y < zone) window.scrollBy(0, -Math.ceil(speed*(1-y/zone)));
+  else if (y > wh-zone) window.scrollBy(0, Math.ceil(speed*(1-(wh-y)/zone)));
+  _scrollRAF = requestAnimationFrame(_autoScrollStep);
+}
 
 function initDragDrop() {
   document.addEventListener('pointerdown', e => {
@@ -615,31 +624,57 @@ function initDragDrop() {
     const itemRow   = handle.closest('.item-row');
     const themeCard = handle.closest('.theme-card');
     _drag = imgCard || itemRow || themeCard; if(!_drag) return;
-    _dragList = _drag.parentNode;
+    _dragList = _drag.parentNode; _dragSrcList = _dragList;
     _dragCtx = imgCard   ? {type:'img',   subj: _dragList.dataset.subj}
              : themeCard ? {type:'theme', subj: _dragList.dataset.subj}
              :             {type:'item',  subj: _dragList.dataset.subj, field: _dragList.dataset.field};
+    _dragSrcCtx = {..._dragCtx};
+    if (_dragCtx.type==='item') {
+      const idx=parseInt(_drag.dataset.idx);
+      _dragItemData = data.subjects[_dragCtx.subj][_dragCtx.field][idx];
+    }
     _dragY0=e.clientY; _dragMoved=false; e.preventDefault();
   });
 
   document.addEventListener('pointermove', e => {
     if(!_drag) return;
-    if(!_dragMoved){if(Math.abs(e.clientY-_dragY0)<5) return; _dragMoved=true; _drag.classList.add('dragging');}
+    _scrollPointerY=e.clientY;
+    if(!_dragMoved){
+      if(Math.abs(e.clientY-_dragY0)<5) return;
+      _dragMoved=true; _drag.classList.add('dragging');
+      if(!_scrollRAF) _scrollRAF=requestAnimationFrame(_autoScrollStep);
+    }
     e.preventDefault();
     _drag.style.pointerEvents='none';
     const under=document.elementFromPoint(e.clientX,e.clientY);
     _drag.style.pointerEvents='';
-    const cls=_dragCtx.type==='img'?'.img-card':_dragCtx.type==='theme'?'.theme-card':'.item-row';
-    const target=under?.closest(cls);
-    if(target&&target!==_drag&&target.parentNode===_dragList){
-      const r=target.getBoundingClientRect();
-      _dragList.insertBefore(_drag, e.clientY>r.top+r.height/2?target.nextSibling:target);
+    if (_dragCtx.type==='item') {
+      const targetRow=under?.closest('.item-row');
+      if (targetRow&&targetRow!==_drag) {
+        const tl=targetRow.parentNode;
+        if (tl.classList.contains('item-list')) {
+          const r=targetRow.getBoundingClientRect();
+          tl.insertBefore(_drag, e.clientY>r.top+r.height/2?targetRow.nextSibling:targetRow);
+          _dragList=tl;
+        }
+      } else {
+        const tl=under?.closest('.item-list');
+        if (tl&&tl!==_drag.parentNode&&tl.dataset.field) { tl.appendChild(_drag); _dragList=tl; }
+      }
+    } else {
+      const cls=_dragCtx.type==='img'?'.img-card':'.theme-card';
+      const target=under?.closest(cls);
+      if(target&&target!==_drag&&target.parentNode===_dragList){
+        const r=target.getBoundingClientRect();
+        _dragList.insertBefore(_drag, e.clientY>r.top+r.height/2?target.nextSibling:target);
+      }
     }
   },{passive:false});
 
   document.addEventListener('pointerup', () => {
     if(!_drag) return;
     _drag.classList.remove('dragging');
+    if(_scrollRAF){cancelAnimationFrame(_scrollRAF);_scrollRAF=null;}
     if(_dragMoved&&_dragCtx){
       if(_dragCtx.type==='img'){
         const ids=[..._dragList.querySelectorAll('.img-card')].map(c=>c.dataset.id);
@@ -652,16 +687,32 @@ function initDragDrop() {
         data.subjects[_dragCtx.subj]['themes']=cards.map(c=>old[parseInt(c.dataset.idx)]).filter(Boolean);
         schedSave(); renderThemeList(_dragCtx.subj); syncViewMode(_dragCtx.subj,'themes');
       } else {
-        const rows=[..._dragList.querySelectorAll('.item-row')];
-        const old=data.subjects[_dragCtx.subj][_dragCtx.field]||[];
-        data.subjects[_dragCtx.subj][_dragCtx.field]=rows.map(r=>old[parseInt(r.dataset.idx)]).filter(s=>s!==undefined);
-        schedSave(); renderItemList(_dragCtx.subj,_dragCtx.field); syncViewMode(_dragCtx.subj,_dragCtx.field);
+        if (_dragList===_dragSrcList) {
+          const rows=[..._dragList.querySelectorAll('.item-row')];
+          const old=data.subjects[_dragCtx.subj][_dragCtx.field]||[];
+          data.subjects[_dragCtx.subj][_dragCtx.field]=rows.map(r=>old[parseInt(r.dataset.idx)]).filter(x=>x!==undefined);
+          schedSave(); renderItemList(_dragCtx.subj,_dragCtx.field); syncViewMode(_dragCtx.subj,_dragCtx.field);
+        } else {
+          const ss=_dragSrcCtx.subj,sf=_dragSrcCtx.field;
+          const ds=_dragList.dataset.subj,df=_dragList.dataset.field;
+          const srcOld=data.subjects[ss][sf]||[];
+          data.subjects[ss][sf]=[..._dragSrcList.querySelectorAll('.item-row')].map(r=>srcOld[parseInt(r.dataset.idx)]).filter(x=>x!==undefined);
+          const dstOld=data.subjects[ds][df]||[];
+          data.subjects[ds][df]=[..._dragList.querySelectorAll('.item-row')].map(r=>r===_drag?_dragItemData:dstOld[parseInt(r.dataset.idx)]).filter(x=>x!==undefined);
+          schedSave();
+          renderItemList(ss,sf); syncViewMode(ss,sf);
+          renderItemList(ds,df); syncViewMode(ds,df);
+        }
       }
     }
-    _drag=null; _dragMoved=false; _dragList=null; _dragCtx=null;
+    _drag=null; _dragMoved=false; _dragList=null; _dragSrcList=null;
+    _dragCtx=null; _dragSrcCtx=null; _dragItemData=null;
   });
 
-  document.addEventListener('pointercancel', () => { if(_drag){_drag.classList.remove('dragging');_drag=null;} });
+  document.addEventListener('pointercancel', () => {
+    if(_drag){_drag.classList.remove('dragging');_drag=null;}
+    if(_scrollRAF){cancelAnimationFrame(_scrollRAF);_scrollRAF=null;}
+  });
 }
 
 // ── UI 操作 ───────────────────────────────────────────
